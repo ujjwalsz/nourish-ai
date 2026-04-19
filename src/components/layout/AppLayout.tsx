@@ -1,6 +1,7 @@
-import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, UtensilsCrossed, Search, LayoutDashboard, Leaf, TrendingUp, Sparkles } from "lucide-react";
+import { MessageCircle, UtensilsCrossed, Search, LayoutDashboard, Leaf, TrendingUp, Sparkles, LogOut } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
 
 interface AppLayoutProps {
   children: React.ReactNode;
