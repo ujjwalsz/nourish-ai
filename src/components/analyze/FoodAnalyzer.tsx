@@ -1,8 +1,10 @@
 import { useState, useRef } from "react";
 import { motion } from "framer-motion";
-import { Search, Zap, Leaf, Droplets, Camera, Upload, X, Sparkles, Loader2 } from "lucide-react";
+import { Search, Zap, Leaf, Droplets, Camera, Upload, X, Sparkles, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface NutritionResult {
   name: string;
@@ -79,13 +81,57 @@ const fileToDataUrl = (file: File) =>
   });
 
 const FoodAnalyzer = () => {
+  const { user } = useAuth();
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<NutritionResult | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
+  const [isLogging, setIsLogging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const saveAnalyzedFood = async (data: NutritionResult, source: "image" | "search") => {
+    if (!user) return;
+    await supabase.from("analyzed_foods").insert({
+      user_id: user.id,
+      name: data.name,
+      serving: data.serving,
+      description: data.description ?? null,
+      confidence: data.confidence ?? null,
+      source,
+      calories: data.calories,
+      protein: data.protein,
+      carbs: data.carbs,
+      fat: data.fat,
+      fiber: data.fiber,
+      sugar: data.sugar,
+      vitamins: data.vitamins ?? [],
+      health_notes: data.healthNotes ?? [],
+    });
+  };
+
+  const logAsMeal = async () => {
+    if (!user || !result) return;
+    setIsLogging(true);
+    const { error } = await supabase.from("meals").insert({
+      user_id: user.id,
+      name: result.name,
+      category: "Snack",
+      calories: result.calories,
+      protein: result.protein,
+      carbs: result.carbs,
+      fat: result.fat,
+      fiber: result.fiber,
+      sugar: result.sugar,
+    });
+    setIsLogging(false);
+    if (error) {
+      toast.error("Failed to log meal");
+      return;
+    }
+    toast.success(`Logged ${result.name} to your meal log`);
+  };
 
   const analyze = (searchTerm: string) => {
     const key = searchTerm.toLowerCase().trim();
@@ -137,6 +183,7 @@ const FoodAnalyzer = () => {
 
       const data: NutritionResult = await resp.json();
       setResult(data);
+      saveAnalyzedFood(data, "image");
       toast.success(`Analyzed: ${data.name}`);
     } catch (e) {
       console.error(e);
@@ -271,6 +318,14 @@ const FoodAnalyzer = () => {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
+          <Button
+            onClick={logAsMeal}
+            disabled={isLogging}
+            className="w-full rounded-xl gap-2"
+          >
+            {isLogging ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            Log this meal
+          </Button>
           <div className="rounded-xl border bg-card p-6">
             <div className="flex items-start justify-between gap-3 mb-4">
               <div className="flex items-center gap-3">

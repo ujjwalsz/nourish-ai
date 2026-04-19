@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, X, UtensilsCrossed, Clock } from "lucide-react";
+import { Plus, X, UtensilsCrossed, Clock, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 interface Meal {
   id: string;
@@ -10,50 +13,94 @@ interface Meal {
   protein: number;
   carbs: number;
   fat: number;
-  time: string;
+  fiber: number;
+  sugar: number;
+  logged_at: string;
   category: string;
 }
 
-const defaultMeals: Meal[] = [
-  { id: "1", name: "Oatmeal with Berries", calories: 340, protein: 12, carbs: 52, fat: 8, time: "7:30 AM", category: "Breakfast" },
-  { id: "2", name: "Grilled Chicken Wrap", calories: 520, protein: 38, carbs: 42, fat: 18, time: "12:30 PM", category: "Lunch" },
-  { id: "3", name: "Trail Mix", calories: 180, protein: 5, carbs: 18, fat: 12, time: "3:00 PM", category: "Snack" },
+const quickAdd = [
+  { name: "Banana", calories: 105, protein: 1, carbs: 27, fat: 0, fiber: 3, sugar: 14 },
+  { name: "Chicken Breast (100g)", calories: 165, protein: 31, carbs: 0, fat: 4, fiber: 0, sugar: 0 },
+  { name: "Brown Rice (1 cup)", calories: 216, protein: 5, carbs: 45, fat: 2, fiber: 4, sugar: 0 },
+  { name: "Greek Yogurt", calories: 100, protein: 17, carbs: 6, fat: 1, fiber: 0, sugar: 6 },
+  { name: "Avocado (half)", calories: 120, protein: 1, carbs: 6, fat: 11, fiber: 5, sugar: 0 },
+  { name: "Hard Boiled Egg", calories: 78, protein: 6, carbs: 1, fat: 5, fiber: 0, sugar: 1 },
 ];
 
-const quickAdd = [
-  { name: "Banana", calories: 105, protein: 1, carbs: 27, fat: 0 },
-  { name: "Chicken Breast (100g)", calories: 165, protein: 31, carbs: 0, fat: 4 },
-  { name: "Brown Rice (1 cup)", calories: 216, protein: 5, carbs: 45, fat: 2 },
-  { name: "Greek Yogurt", calories: 100, protein: 17, carbs: 6, fat: 1 },
-  { name: "Avocado (half)", calories: 120, protein: 1, carbs: 6, fat: 11 },
-  { name: "Hard Boiled Egg", calories: 78, protein: 6, carbs: 1, fat: 5 },
-];
+const formatTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
 const MealLogger = () => {
-  const [meals, setMeals] = useState<Meal[]>(defaultMeals);
+  const { user } = useAuth();
+  const [meals, setMeals] = useState<Meal[]>([]);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const addMeal = (item: typeof quickAdd[0]) => {
-    const now = new Date();
-    const time = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    const newMeal: Meal = {
-      id: Date.now().toString(),
-      ...item,
-      time,
-      category: "Snack",
+  useEffect(() => {
+    if (!user) return;
+    const load = async () => {
+      // Today only
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+
+      const { data, error } = await supabase
+        .from("meals")
+        .select("*")
+        .eq("user_id", user.id)
+        .gte("logged_at", startOfDay.toISOString())
+        .order("logged_at", { ascending: true });
+
+      if (error) {
+        toast.error("Failed to load meals");
+      } else {
+        setMeals((data || []) as Meal[]);
+      }
+      setLoading(false);
     };
-    setMeals((prev) => [...prev, newMeal]);
+    load();
+  }, [user]);
+
+  const addMeal = async (item: typeof quickAdd[0]) => {
+    if (!user) return;
+    const { data, error } = await supabase
+      .from("meals")
+      .insert({
+        user_id: user.id,
+        name: item.name,
+        category: "Snack",
+        calories: item.calories,
+        protein: item.protein,
+        carbs: item.carbs,
+        fat: item.fat,
+        fiber: item.fiber,
+        sugar: item.sugar,
+      })
+      .select()
+      .single();
+
+    if (error || !data) {
+      toast.error("Failed to add meal");
+      return;
+    }
+    setMeals((prev) => [...prev, data as Meal]);
     setShowQuickAdd(false);
+    toast.success(`Logged ${item.name}`);
   };
 
-  const removeMeal = (id: string) => {
+  const removeMeal = async (id: string) => {
+    const { error } = await supabase.from("meals").delete().eq("id", id);
+    if (error) {
+      toast.error("Failed to remove meal");
+      return;
+    }
     setMeals((prev) => prev.filter((m) => m.id !== id));
   };
 
-  const totalCals = meals.reduce((s, m) => s + m.calories, 0);
-  const totalProtein = meals.reduce((s, m) => s + m.protein, 0);
-  const totalCarbs = meals.reduce((s, m) => s + m.carbs, 0);
-  const totalFat = meals.reduce((s, m) => s + m.fat, 0);
+  const totalCals = meals.reduce((s, m) => s + Number(m.calories), 0);
+  const totalProtein = meals.reduce((s, m) => s + Number(m.protein), 0);
+  const totalCarbs = meals.reduce((s, m) => s + Number(m.carbs), 0);
+  const totalFat = meals.reduce((s, m) => s + Number(m.fat), 0);
 
   return (
     <div className="container py-8 pb-24 md:pb-8 space-y-6">
@@ -68,7 +115,6 @@ const MealLogger = () => {
         </Button>
       </div>
 
-      {/* Quick Add Panel */}
       <AnimatePresence>
         {showQuickAdd && (
           <motion.div
@@ -96,13 +142,12 @@ const MealLogger = () => {
         )}
       </AnimatePresence>
 
-      {/* Daily Summary */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          { label: "Calories", value: totalCals, unit: "kcal" },
-          { label: "Protein", value: totalProtein, unit: "g" },
-          { label: "Carbs", value: totalCarbs, unit: "g" },
-          { label: "Fat", value: totalFat, unit: "g" },
+          { label: "Calories", value: Math.round(totalCals), unit: "kcal" },
+          { label: "Protein", value: Math.round(totalProtein), unit: "g" },
+          { label: "Carbs", value: Math.round(totalCarbs), unit: "g" },
+          { label: "Fat", value: Math.round(totalFat), unit: "g" },
         ].map((s) => (
           <div key={s.label} className="rounded-xl bg-card border p-4 text-center">
             <p className="font-display text-xl text-foreground">{s.value}</p>
@@ -111,48 +156,57 @@ const MealLogger = () => {
         ))}
       </div>
 
-      {/* Meal List */}
-      <div className="space-y-3">
-        <AnimatePresence>
-          {meals.map((meal) => (
-            <motion.div
-              key={meal.id}
-              layout
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20, height: 0 }}
-              className="flex items-center justify-between rounded-xl border bg-card p-4"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary">
-                  <UtensilsCrossed className="h-4 w-4 text-secondary-foreground" />
-                </div>
-                <div>
-                  <p className="font-medium text-foreground">{meal.name}</p>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    {meal.time}
-                    <span>·</span>
-                    <span>{meal.category}</span>
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : meals.length === 0 ? (
+        <div className="rounded-xl border bg-card p-8 text-center">
+          <p className="text-sm text-muted-foreground">No meals logged today. Tap “Add Food” to get started.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <AnimatePresence>
+            {meals.map((meal) => (
+              <motion.div
+                key={meal.id}
+                layout
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20, height: 0 }}
+                className="flex items-center justify-between rounded-xl border bg-card p-4"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary">
+                    <UtensilsCrossed className="h-4 w-4 text-secondary-foreground" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-foreground">{meal.name}</p>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      {formatTime(meal.logged_at)}
+                      <span>·</span>
+                      <span>{meal.category}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="text-right hidden sm:block">
-                  <p className="text-sm font-medium text-foreground">{meal.calories} kcal</p>
-                  <p className="text-xs text-muted-foreground">P:{meal.protein}g C:{meal.carbs}g F:{meal.fat}g</p>
+                <div className="flex items-center gap-4">
+                  <div className="text-right hidden sm:block">
+                    <p className="text-sm font-medium text-foreground">{Math.round(Number(meal.calories))} kcal</p>
+                    <p className="text-xs text-muted-foreground">P:{Math.round(Number(meal.protein))}g C:{Math.round(Number(meal.carbs))}g F:{Math.round(Number(meal.fat))}g</p>
+                  </div>
+                  <button
+                    onClick={() => removeMeal(meal.id)}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => removeMeal(meal.id)}
-                  className="text-muted-foreground hover:text-destructive transition-colors"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
     </div>
   );
 };
