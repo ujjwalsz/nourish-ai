@@ -19,6 +19,7 @@ const tabs = [
 ];
 
 const AppLayout = ({ children, activeTab, onTabChange }: AppLayoutProps) => {
+  const { signOut } = useAuth();
   return (
     <div className="flex min-h-screen flex-col bg-background">
       {/* Header */}
@@ -54,7 +55,14 @@ const AppLayout = ({ children, activeTab, onTabChange }: AppLayoutProps) => {
                 </span>
               </button>
             ))}
+            <Button variant="ghost" size="sm" onClick={signOut} className="ml-2 gap-2 text-muted-foreground hover:text-foreground">
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </Button>
           </nav>
+          <Button variant="ghost" size="icon" onClick={signOut} className="md:hidden text-muted-foreground" aria-label="Sign out">
+            <LogOut className="h-4 w-4" />
+          </Button>
         </div>
       </header>
 
