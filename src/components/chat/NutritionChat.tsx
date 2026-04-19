@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Bot, User, Sparkles } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 interface Message {
   id: string;
@@ -16,56 +18,130 @@ const suggestions = [
   "What vitamins help with energy?",
 ];
 
-// Simple local AI responses for demo
-const getAIResponse = (input: string): string => {
-  const lower = input.toLowerCase();
-  if (lower.includes("protein")) {
-    return "**Great question about protein!** 💪\n\nThe recommended daily protein intake varies:\n\n- **Sedentary adults**: 0.8g per kg of body weight\n- **Active individuals**: 1.2–1.6g per kg\n- **Athletes/muscle building**: 1.6–2.2g per kg\n\n**Top protein sources:**\n- Chicken breast (31g per 100g)\n- Greek yogurt (10g per 100g)\n- Lentils (9g per 100g)\n- Eggs (6g per egg)\n\nWould you like me to calculate your specific daily protein needs?";
-  }
-  if (lower.includes("vitamin") || lower.includes("energy")) {
-    return "**Vitamins for Energy** ⚡\n\nKey vitamins that support energy levels:\n\n1. **Vitamin B12** — Essential for red blood cell formation\n2. **Iron** — Carries oxygen to muscles and brain\n3. **Vitamin D** — Supports immune function and mood\n4. **Magnesium** — Involved in 300+ enzymatic reactions\n\n**Food sources:** Leafy greens, nuts, seeds, whole grains, citrus fruits, and fatty fish.";
-  }
-  if (lower.includes("recipe") || lower.includes("dinner") || lower.includes("meal")) {
-    return "**Low-Carb Grilled Salmon Bowl** 🐟\n\n**Ingredients:**\n- 150g salmon fillet\n- 1 cup cauliflower rice\n- 1/2 avocado, sliced\n- Handful of spinach\n- Cherry tomatoes\n- Lemon & olive oil dressing\n\n**Macros per serving:**\n- Calories: 420 kcal\n- Protein: 35g\n- Carbs: 12g\n- Fat: 28g\n\nSimple, nutritious, and ready in 20 minutes!";
-  }
-  if (lower.includes("muscle") || lower.includes("recovery")) {
-    return "**Best Foods for Muscle Recovery** 🏋️\n\n1. **Tart cherry juice** — Reduces inflammation\n2. **Salmon** — Omega-3 fatty acids for repair\n3. **Sweet potatoes** — Glycogen replenishment\n4. **Eggs** — Complete amino acid profile\n5. **Cottage cheese** — Casein protein for sustained recovery\n\n**Timing matters:** Aim for a protein-rich meal within 2 hours post-workout.";
-  }
-  return "**Thanks for your question!** 🌿\n\nI'm your AI nutrition assistant. I can help you with:\n\n- **Macro tracking** — Understanding your protein, carb, and fat needs\n- **Meal suggestions** — Healthy recipes tailored to your goals\n- **Nutrient analysis** — Breaking down the nutrition of any food\n- **Diet guidance** — Evidence-based nutrition advice\n\nWhat would you like to know more about?";
-};
+const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/nutrition-chat`;
 
 const NutritionChat = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
       role: "assistant",
-      content: "Hello! 🌿 I'm your AI nutrition assistant. Ask me anything about nutrition, meal planning, or food analysis. How can I help you today?",
+      content:
+        "Hello! 🌿 I'm your AI nutrition assistant. Ask me anything about nutrition, meal planning, or food analysis. How can I help you today?",
     },
   ]);
   const [input, setInput] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, isTyping]);
+  }, [messages, isLoading]);
 
   const send = async (text: string) => {
-    if (!text.trim()) return;
+    if (!text.trim() || isLoading) return;
+
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    const history = [...messages, userMsg];
+    setMessages(history);
     setInput("");
-    setIsTyping(true);
+    setIsLoading(true);
 
-    // Simulate thinking delay
-    await new Promise((r) => setTimeout(r, 800 + Math.random() * 700));
+    const assistantId = (Date.now() + 1).toString();
+    let assistantSoFar = "";
+    let createdAssistant = false;
 
-    const response = getAIResponse(text);
-    setMessages((prev) => [
-      ...prev,
-      { id: (Date.now() + 1).toString(), role: "assistant", content: response },
-    ]);
-    setIsTyping(false);
+    const upsertAssistant = (chunk: string) => {
+      assistantSoFar += chunk;
+      setMessages((prev) => {
+        if (!createdAssistant) {
+          createdAssistant = true;
+          return [...prev, { id: assistantId, role: "assistant", content: assistantSoFar }];
+        }
+        return prev.map((m) => (m.id === assistantId ? { ...m, content: assistantSoFar } : m));
+      });
+    };
+
+    try {
+      const resp = await fetch(CHAT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({
+          messages: history
+            .filter((m) => m.id !== "welcome")
+            .map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+
+      if (!resp.ok || !resp.body) {
+        if (resp.status === 429) toast.error("Too many requests. Please wait a moment.");
+        else if (resp.status === 402) toast.error("AI credits exhausted. Please add funds to your workspace.");
+        else toast.error("Failed to reach AI. Please try again.");
+        setIsLoading(false);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let textBuffer = "";
+      let streamDone = false;
+
+      while (!streamDone) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        textBuffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex: number;
+        while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
+          let line = textBuffer.slice(0, newlineIndex);
+          textBuffer = textBuffer.slice(newlineIndex + 1);
+
+          if (line.endsWith("\r")) line = line.slice(0, -1);
+          if (line.startsWith(":") || line.trim() === "") continue;
+          if (!line.startsWith("data: ")) continue;
+
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === "[DONE]") {
+            streamDone = true;
+            break;
+          }
+
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+            if (content) upsertAssistant(content);
+          } catch {
+            textBuffer = line + "\n" + textBuffer;
+            break;
+          }
+        }
+      }
+
+      if (textBuffer.trim()) {
+        for (let raw of textBuffer.split("\n")) {
+          if (!raw) continue;
+          if (raw.endsWith("\r")) raw = raw.slice(0, -1);
+          if (raw.startsWith(":") || raw.trim() === "") continue;
+          if (!raw.startsWith("data: ")) continue;
+          const jsonStr = raw.slice(6).trim();
+          if (jsonStr === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+            if (content) upsertAssistant(content);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -78,7 +154,7 @@ const NutritionChat = () => {
           </div>
           <div>
             <h2 className="font-display text-xl text-foreground">Nutrition AI</h2>
-            <p className="text-sm text-muted-foreground">Powered by machine learning</p>
+            <p className="text-sm text-muted-foreground">Powered by Lovable AI</p>
           </div>
         </div>
 
@@ -104,17 +180,13 @@ const NutritionChat = () => {
                       : "bg-card border text-card-foreground"
                   }`}
                 >
-                  {msg.content.split("\n").map((line, i) => {
-                    const bold = line.replace(/\*\*(.*?)\*\*/g, "");
-                    const hasBold = line.includes("**");
-                    return (
-                      <p key={i} className={`${i > 0 ? "mt-1" : ""} ${hasBold && line.startsWith("**") ? "font-semibold" : ""}`}>
-                        {line.split(/\*\*(.*?)\*\*/).map((part, j) =>
-                          j % 2 === 1 ? <strong key={j}>{part}</strong> : part
-                        )}
-                      </p>
-                    );
-                  })}
+                  {msg.role === "assistant" ? (
+                    <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-headings:my-2 prose-strong:text-foreground">
+                      <ReactMarkdown>{msg.content || "…"}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                  )}
                 </div>
                 {msg.role === "user" && (
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
@@ -125,7 +197,7 @@ const NutritionChat = () => {
             ))}
           </AnimatePresence>
 
-          {isTyping && (
+          {isLoading && messages[messages.length - 1]?.role === "user" && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -145,7 +217,7 @@ const NutritionChat = () => {
           )}
 
           {/* Suggestions */}
-          {messages.length <= 1 && (
+          {messages.length <= 1 && !isLoading && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
               {suggestions.map((s) => (
                 <button
@@ -171,7 +243,7 @@ const NutritionChat = () => {
           />
           <Button
             onClick={() => send(input)}
-            disabled={!input.trim() || isTyping}
+            disabled={!input.trim() || isLoading}
             size="icon"
             className="h-12 w-12 rounded-xl"
           >
