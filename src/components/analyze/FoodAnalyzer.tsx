@@ -1,8 +1,10 @@
 import { useState, useRef } from "react";
 import { motion } from "framer-motion";
-import { Search, Zap, Leaf, Droplets, Camera, Upload, X, Sparkles, Loader2 } from "lucide-react";
+import { Search, Zap, Leaf, Droplets, Camera, Upload, X, Sparkles, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface NutritionResult {
   name: string;
